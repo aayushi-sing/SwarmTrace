@@ -54,7 +54,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
-        "https://swarm-trace-8mqarugyw-me-c0a1.vercel.app",
+        "https://swarm-trace-taupe.vercel.app",
         "https://*.vercel.app",
     ],
     allow_credentials=True,
