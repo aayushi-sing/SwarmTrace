@@ -2,126 +2,138 @@
 
 **Trace, inspect, and investigate AI agent execution.**
 
-SwarmTrace records agent inputs, outputs, parent-child relationships, latency, and token usage so developers can follow a multi-agent run beyond flat application logs. Its web dashboard brings trace exploration, execution trees, snapshot-based replay, and LLM evaluation into one workflow.
+SwarmTrace is an AI agent observability and debugging platform that helps developers understand what happens inside multi-agent workflows. It records agent inputs, outputs, parent-child relationships, execution latency, and token usage, allowing developers to investigate runs beyond traditional application logs.
 
-It is intended for developers building AI agent pipelines who need to identify which step produced an unexpected result, inspect the data passed between agents, and compare the outcome of a controlled change. General agent instrumentation is available through the Python SDK; replay currently targets the bundled researcher → writer → critic pipeline.
+Its web dashboard provides trace exploration, execution trees, span inspection, snapshot-based replay, and LLM-powered evaluation in one interface.
 
-[Getting started](#getting-started) · [Docker setup](#docker-setup) · [SDK usage](#sdk-usage) · [API overview](#api-overview) · [Current limitations](#current-limitations)
+SwarmTrace is designed for developers building AI agent pipelines who need to identify which step produced an unexpected result, inspect the information passed between agents, and investigate the impact of changes.
 
-## Key features
+General agent instrumentation is available through the Python SDK. Replay currently targets the bundled researcher → writer → critic pipeline.
 
-- **Dashboard:** trace counts, success rate, average latency, estimated cost, and daily activity over the last seven days.
-- **Trace exploration:** select a project, search by trace ID, and filter by status or root agent. Trace notifications refresh the dashboard over WebSocket.
-- **Execution trees:** inspect parent-child span relationships in an interactive React Flow graph with zoom controls and a minimap. Select a span to inspect its input and edit an output override.
-- **Trace details:** view execution status, latency, estimated cost, and links to a fork's parent trace.
-- **Snapshot replay:** merge overrides into a saved state, create a linked fork, and resume downstream steps in the bundled pipeline. Compare original and forked outputs, latency, and cost side by side.
-- **Evaluation:** run a Groq-hosted judge on unevaluated `AGENT_REASONING` spans and view relevance, reasoning, quality, overall scores, feedback, and verdicts.
-- **Accounts and project settings:** register or sign in, create and delete projects, issue and revoke project-scoped ingestion API keys, and configure failure/loop webhooks.
-- **Additional backend APIs:** project membership roles, retention policies, best-effort audit logging, and generated OTLP JSON exports. These capabilities do not have dedicated pages in the current frontend.
+## Key Features
 
-Implementation boundaries and access-control gaps are documented under [Security](#security) and [Current limitations](#current-limitations). Features described here are established from source inspection; external-service workflows still require a configured environment to verify end to end.
+- **Observability Dashboard:** Monitor trace counts, success rate, average latency, estimated cost, and daily execution activity.
+- **Trace Explorer:** Browse traces, select projects, search by trace ID, and filter by status or root agent.
+- **Execution Trees:** Visualize parent-child span relationships with an interactive graph, zoom controls, and minimap.
+- **Span Inspection:** Inspect individual agent inputs, outputs, execution details, and output overrides.
+- **Trace Investigation:** View execution status, latency, estimated cost, and relationships between original and forked traces.
+- **Snapshot-Based Replay:** Modify saved execution state, create a linked fork, and resume downstream steps in the bundled agent pipeline.
+- **LLM Evaluation:** Evaluate agent reasoning spans using a Groq-hosted judge and inspect relevance, reasoning, quality, overall scores, feedback, and verdicts.
+- **Authentication and Project Management:** Register, sign in, create projects, and manage project-scoped API keys.
+- **Webhook Alerts:** Configure webhook notifications for supported failure and loop events.
+- **Additional Backend APIs:** Project membership, retention policies, audit logging, billing-plan metadata, and OTLP JSON export.
 
-## Screenshots
-
-Screenshots of the redesigned interface will be added soon.
+Some backend capabilities do not have dedicated frontend pages. See [Current Limitations](#current-limitations) for implementation boundaries.
 
 ## Architecture
 
-The React frontend calls a FastAPI backend through Axios and subscribes to trace notifications. FastAPI stores users, projects, keys, traces, spans, snapshots, evaluations, and configuration in PostgreSQL through an asynchronous `asyncpg` pool.
+The application consists of a React frontend, FastAPI backend, PostgreSQL database, and Python SDK.
 
-The Python SDK sends application-specific JSON spans to `/ingest`. The bundled agents use a separate lightweight span helper that also submits state snapshots. Replay loads those snapshots and invokes the bundled orchestrator. Agent execution and evaluation call Groq; configured alerts send outbound HTTP POST requests.
+The frontend communicates with the backend through HTTP APIs and WebSockets. The SDK sends application-specific JSON spans to the ingestion endpoint. The bundled agents additionally submit execution snapshots, which are used by the replay workflow.
+
+Agent execution and evaluation use Groq. Configured alerts send outbound HTTP POST requests.
 
 ```mermaid
 flowchart LR
-    APP[Instrumented Python application] --> SDK[SwarmTrace Python SDK]
-    SDK -->|JSON spans /ingest| API[FastAPI backend]
-    UI[React web frontend] -->|HTTP API| API
-    API -->|WebSocket trace notifications| UI
+    APP[Instrumented Python Application] --> SDK[SwarmTrace Python SDK]
+    SDK -->|JSON spans| API[FastAPI Backend]
+    UI[React Frontend] -->|HTTP API| API
+    API -->|WebSocket notifications| UI
     API <-->|asyncpg| DB[(PostgreSQL)]
-    API -->|Replay saved state| AGENTS[Bundled agent pipeline]
-    AGENTS -->|Spans and snapshots /ingest| API
+    API -->|Replay saved state| AGENTS[Bundled Agent Pipeline]
+    AGENTS -->|Spans and snapshots| API
     AGENTS -->|LLM requests| GROQ[Groq]
     API -->|Evaluation requests| GROQ
-    API -->|Configured alert POST| WEBHOOK[Webhook endpoint]
-    API -->|Generated OTLP JSON| EXPORT[Export response or download]
+    API -->|Webhook POST| WEBHOOK[Webhook Endpoint]
 ```
 
-Tracing uses custom JSON ingestion and OTel-inspired span relationships. Neither the local SDK nor the backend span helper initializes the official OpenTelemetry SDK. OTLP is generated on export; no collector service is included.
+Tracing uses custom JSON ingestion and OTel-inspired span relationships. The SDK and backend span helper do not initialize the official OpenTelemetry SDK. OTLP JSON is generated through the export API; an OpenTelemetry collector is not included.
 
-## Technology stack
+## Technology Stack
 
-| Area | Technologies in this repository |
-| --- | --- |
-| Frontend | React 19, React Router 7, Vite 8, Tailwind CSS 4, Axios, `@xyflow/react` |
+| Area | Technologies |
+|---|---|
+| Frontend | React 19, React Router 7, Vite 8, Tailwind CSS 4, Axios, React Flow |
 | Backend | Python 3.12+, FastAPI, Uvicorn, Pydantic, HTTPX |
-| Database | PostgreSQL, `asyncpg`; PostgreSQL 16 in Compose; a hosted PostgreSQL URL can also be supplied |
-| Agent execution and evaluation | LangChain Groq integration for bundled agents; Groq client for evaluations; LangGraph is declared as a dependency, while the bundled orchestrator calls agents sequentially |
-| Authentication | bcrypt password hashing, `python-jose` HS256 JWTs, project-scoped API keys |
-| Observability | Custom span/snapshot ingestion, WebSockets, token-based cost estimates, OTLP JSON export |
-| Python SDK | Python 3.10+, HTTPX, Hatchling packaging |
-| Tooling and infrastructure | pytest, pytest-asyncio, pytest-mock, Ruff, Oxlint, Docker Compose, Render backend blueprint |
+| Database | PostgreSQL, asyncpg |
+| Agent execution | LangChain Groq integration |
+| Evaluation | Groq client |
+| Authentication | bcrypt, python-jose, HS256 JWT |
+| Observability | Custom span and snapshot ingestion, WebSockets, token-based cost estimates, OTLP JSON export |
+| Python SDK | Python 3.10+, HTTPX, Hatchling |
+| Infrastructure | Docker Compose, Render configuration |
+| Testing and tooling | pytest, pytest-asyncio, pytest-mock, Ruff, Oxlint |
 
-Dependency declarations are in [backend/pyproject.toml](backend/pyproject.toml), [backend/requirements.txt](backend/requirements.txt), [frontend/package.json](frontend/package.json), and [sdk/pyproject.toml](sdk/pyproject.toml).
+Dependency declarations:
 
-## Project structure
+- `backend/pyproject.toml`
+- `backend/requirements.txt`
+- `frontend/package.json`
+- `sdk/pyproject.toml`
+
+## Project Structure
 
 ```text
 SwarmTrace/
 ├── backend/
-│   ├── main.py                 # FastAPI app, CORS, schema setup, startup retention
-│   ├── database.py             # Connection pool and core database schema
-│   ├── models.py               # Ingestion, trace, and replay payloads
-│   ├── auth/                   # JWT, password hashing, API keys, role dependencies
-│   ├── agents/                 # Orchestrator, researcher, writer, critic
-│   ├── tracing/otel_setup.py   # Lightweight span and snapshot emitter
-│   ├── routers/                # Auth, traces, replay, evaluation, settings APIs
-│   ├── alerting.py             # Outbound webhook delivery
-│   ├── tests/                  # Mock-based backend tests
+│   ├── main.py
+│   ├── database.py
+│   ├── models.py
+│   ├── auth/
+│   ├── agents/
+│   ├── tracing/
+│   ├── routers/
+│   ├── alerting.py
+│   ├── tests/
 │   ├── pyproject.toml
 │   ├── requirements.txt
 │   └── Dockerfile
+│
 ├── frontend/
 │   ├── src/
-│   │   ├── main.jsx            # React root and StrictMode
-│   │   ├── App.jsx             # Routes and browser login gate
-│   │   ├── api/client.js        # Axios client and WebSocket factories
-│   │   ├── pages/              # TraceList, TraceDetail, TraceDiff, Login, Settings
-│   │   └── components/         # SpanTree, SpanNode, ReplayPanel
+│   │   ├── main.jsx
+│   │   ├── App.jsx
+│   │   ├── api/
+│   │   ├── pages/
+│   │   └── components/
+│   ├── tests/
 │   ├── package.json
 │   └── vite.config.js
+│
 ├── sdk/
-│   ├── swarmtrace/             # SwarmTracer, Span, sync/async HTTP transport
+│   ├── swarmtrace/
 │   └── pyproject.toml
-├── docs/screenshots/           # Historical UI images; not used in this README
-├── landing/index.html          # Separate static landing page
+│
+├── docs/
+│   └── project-authorization.md
+│
+├── landing/
 ├── docker-compose.yml
 ├── docker-compose.env.example
-└── render.yaml                 # Backend service deployment
+└── render.yaml
 ```
 
-## Getting started
+## Getting Started
 
 ### Prerequisites
 
-- Git.
-- Python **3.12+** for the backend. The standalone SDK supports Python **3.10+**.
-- Node.js **20.19+ within the 20.x line, or 22.12+**, matching the installed Vite package's engine declaration, and npm.
-- A reachable PostgreSQL database and a database user allowed to create tables and alter the schema. Compose provides a local database if preferred.
-- A Groq API key for bundled agent runs, replay that executes agents, and evaluations. Browsing existing traces and ingesting SDK spans do not themselves call Groq.
-- Docker with Compose support for the [Docker setup](#docker-setup), optionally Docker Desktop on Windows.
+- Git
+- Python 3.12 or newer for the backend
+- Python 3.10 or newer for the standalone SDK
+- Node.js 20.19+ (20.x) or 22.12+, and npm
+- PostgreSQL database, or Docker with Docker Compose
+- Groq API key for bundled agent execution, replay, and evaluation
 
-### Clone the repository
+### 1. Clone the Repository
 
-These commands work in a general shell and Windows CMD:
-
-```sh
-git clone https://github.com/codewithleo1/SwarmTrace.git
+```bash
+git clone https://github.com/aayushi-sing/SwarmTrace.git
 cd SwarmTrace
 ```
 
-### Configure the backend environment
+### 2. Configure Backend Environment
 
-Create `backend/.env` locally with the following template. Replace all angle-bracket placeholders; they are not working credentials. The current working tree does not contain `backend/.env.example`, so there is no backend template-copy step.
+Create a file named `backend/.env`.
 
 ```dotenv
 DATABASE_URL=postgresql://<db-user>:<db-password>@<db-host>:5432/<db-name>
@@ -130,34 +142,28 @@ GROQ_API_KEY=<your-groq-api-key>
 INGEST_URL=http://localhost:8000/ingest
 ```
 
-Use the SSL settings required by your database provider in `DATABASE_URL`. Keep secrets in local environment files or your deployment's secret store, and do not commit populated files.
+Replace the placeholders with your own values.
 
-| Variable | Where it is used |
-| --- | --- |
-| `DATABASE_URL` | Backend PostgreSQL pool; required for application startup |
-| `JWT_SECRET_KEY` | JWT signing and verification; explicitly set it to avoid the insecure source fallback |
-| `GROQ_API_KEY` | Bundled agents and evaluation judge |
-| `INGEST_URL` | Bundled span emitter; also used to derive the backend URL for trace completion |
-| `SWARMTRACE_API_KEY` | Bundled span emitter's `X-API-Key`; add after creating a project API key |
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `JWT_SECRET_KEY` | JWT signing and verification |
+| `GROQ_API_KEY` | Bundled agent execution and LLM evaluation |
+| `INGEST_URL` | Backend ingestion URL used by the bundled span emitter |
+| `SWARMTRACE_API_KEY` | Project API key used by the bundled span emitter |
 | `VITE_API_URL` | Frontend backend origin; defaults to `http://localhost:8000` |
 
-`ENVIRONMENT` and `LOG_LEVEL` appear in Compose and Render configuration, but no application code was found reading them. They do not replace configuration of authentication or access control.
+Keep environment files and credentials out of source control.
 
-### Start the backend
+Use the SSL settings required by your database provider when configuring `DATABASE_URL`.
 
-From the repository root, in a general POSIX shell:
+### 3. Start the Backend
 
-```sh
-cd backend
-python -m venv .venv
-. .venv/bin/activate
-python -m pip install -r requirements.txt
-python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
-```
+From the repository root:
 
-Windows CMD:
+**Windows CMD**
 
-```bat
+```cmd
 cd backend
 py -3.12 -m venv .venv
 .venv\Scripts\activate.bat
@@ -165,94 +171,147 @@ python -m pip install -r requirements.txt
 python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-Run from `backend/` so local imports and `.env` discovery match the project layout. Startup applies the schema, ensures auxiliary tables exist, and runs retention cleanup for projects with configured policies.
+**Linux / macOS**
 
-- Health: `http://127.0.0.1:8000/health`
+```bash
+cd backend
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Run the backend from the `backend/` directory so local imports and environment-file discovery work as expected.
+
+The backend starts at:
+
+- API: `http://127.0.0.1:8000`
+- Health endpoint: `http://127.0.0.1:8000/health`
 - Interactive API documentation: `http://127.0.0.1:8000/docs`
 - OpenAPI schema: `http://127.0.0.1:8000/openapi.json`
 
-The health route returns application metadata; it does not perform a database readiness query.
+The health endpoint returns application metadata; it does not verify database readiness.
 
-### Start the frontend
+### 4. Start the Frontend
 
-In a second terminal, from the repository root:
+Open a second terminal.
 
-```sh
+```bash
 cd frontend
 npm ci
 npm run dev
 ```
 
-The same commands work in Windows CMD. Open `http://localhost:5173`, register an account, then use Settings to create a project and an API key. The demo login button requires a pre-existing demo account; normal startup does not create it.
+Open:
 
-For an explicit backend origin, create `frontend/.env.local`:
+`http://localhost:5173`
+
+Register an account and use Settings to create a project and an API key.
+
+If your backend runs at a different origin, create `frontend/.env.local`:
 
 ```dotenv
 VITE_API_URL=http://localhost:8000
 ```
 
-Use an absolute HTTP(S) backend origin: WebSocket URLs are derived from it. Restart Vite after changing the environment. The default client calls port 8000 directly, so the `/api` proxy in [vite.config.js](frontend/vite.config.js) is not used by that default configuration. The backend explicitly allows `http://localhost:5173` through CORS; `http://127.0.0.1:5173` is a different origin.
+Restart the Vite development server after changing frontend environment variables.
 
-### Produce a trace
+The frontend uses an absolute backend URL. WebSocket URLs are derived from that setting. Ensure the backend CORS configuration allows your frontend origin.
 
-Use the [SDK example](#sdk-usage) to record your own agent steps. To run the bundled pipeline with snapshots, add your project key to `backend/.env`:
+### 5. Produce a Trace
+
+Create a project in Settings and generate a project API key.
+
+For the standalone SDK, follow the [SDK Usage](#sdk-usage) instructions.
+
+To run the bundled agent pipeline, add the project key to `backend/.env`:
 
 ```dotenv
 SWARMTRACE_API_KEY=<your-project-api-key>
 ```
 
-Restart the backend so replay's emitter loads the key. In another terminal with the backend virtual environment activated, run from `backend/`:
+Restart the backend.
 
-```sh
+From the `backend/` directory, with the virtual environment activated:
+
+```bash
 python -m agents.orchestrator
 ```
 
-This calls Groq and may incur provider charges. Agent and judge model identifiers are hard-coded in source; their availability for your Groq account requires live verification. Refresh trace details after execution to inspect the completed tree.
+This runs the bundled agent pipeline and may make requests to Groq, potentially incurring provider charges.
 
-## Docker setup
+The bundled agent and judge model identifiers are configured in source code. Their availability depends on your Groq account and requires runtime verification.
 
-[Docker Compose](docker-compose.yml) defines **PostgreSQL and the backend only**. Run the frontend separately with npm.
+## Docker Setup
 
-From the repository root, copy the Compose environment template:
+The checked-in Docker Compose configuration provides PostgreSQL and the backend. The frontend must be started separately.
 
-```sh
-cp docker-compose.env.example .env
-```
+From the repository root, copy the environment template.
 
-Windows CMD equivalent:
+**Windows CMD**
 
-```bat
+```cmd
 copy docker-compose.env.example .env
 ```
 
-Edit the new root `.env` and supply your own `GROQ_API_KEY` and `JWT_SECRET_KEY`. Then:
+**Linux / macOS**
 
-```sh
+```bash
+cp docker-compose.env.example .env
+```
+
+Edit the root `.env` file and provide your own:
+
+```dotenv
+GROQ_API_KEY=<your-groq-api-key>
+JWT_SECRET_KEY=<your-long-random-secret>
+```
+
+Start the services:
+
+```bash
 docker compose up --build -d
+```
+
+View backend logs:
+
+```bash
 docker compose logs -f backend
 ```
 
-The backend is exposed on port 8000 and PostgreSQL on port 5432. Database state persists in the `postgres_data` volume. Compose supplies the backend database URL and waits for PostgreSQL's health check before starting the backend.
+Stop the services:
 
-Stop the services while retaining the database volume:
-
-```sh
+```bash
 docker compose down
 ```
 
-Compose currently declares fixed local database credentials and publishes PostgreSQL to the host. Treat this configuration as local development infrastructure. No credentials from that configuration are reproduced here.
+The PostgreSQL data is persisted in the `postgres_data` volume.
 
-**Replay caveat:** the Compose backend environment does not forward `SWARMTRACE_API_KEY`. Adding that variable to the root `.env` alone will not pass it into the container. Backend-internal span emission requires that variable to be explicitly supplied to the backend service; the checked-in Compose setup does not complete that wiring. An external SDK can still send an API key in its ingestion requests.
+**Docker configuration notes:**
 
-## SDK usage
+- Compose currently uses fixed local database credentials. Treat this configuration as local development infrastructure.
+- PostgreSQL is published on the host.
+- The backend service does not automatically receive `SWARMTRACE_API_KEY` through the current Compose configuration. Backend-internal span emission and replay therefore need additional environment wiring.
+- Do not reuse local Compose credentials in a public or production deployment.
 
-Install the checked-in Python package from the repository root, using your active Python environment:
+## Python SDK Usage
 
-```sh
+The Python SDK allows applications to submit spans to SwarmTrace.
+
+Install the package from the repository root:
+
+```bash
 python -m pip install -e ./sdk
 ```
 
-Create a project API key in Settings. Set it as `SWARMTRACE_API_KEY` in the environment of the process running this example. Configure `SWARMTRACE_BASE_URL` only if your backend is elsewhere; the example reads that variable explicitly.
+Create a project API key in Settings and configure it in your environment.
+
+```dotenv
+SWARMTRACE_API_KEY=<your-project-api-key>
+SWARMTRACE_BASE_URL=http://localhost:8000
+```
+
+Example:
 
 ```python
 import os
@@ -261,163 +320,250 @@ from swarmtrace import SwarmTracer
 
 tracer = SwarmTracer(
     api_key=os.environ["SWARMTRACE_API_KEY"],
-    base_url=os.environ.get("SWARMTRACE_BASE_URL", "http://localhost:8000"),
+    base_url=os.environ.get(
+        "SWARMTRACE_BASE_URL",
+        "http://localhost:8000",
+    ),
 )
 
-with tracer.span("orchestrator", input_payload={"task": "summarize a document"}) as root:
+with tracer.span(
+    "orchestrator",
+    input_payload={"task": "summarize a document"},
+) as root:
+
     with tracer.span(
         "summarizer",
         parent_span_id=root.span_id,
         input_payload={"text": "Example document"},
     ) as child:
+
         child.set_output({"summary": "Example summary"})
-        child.set_token_usage(prompt_tokens=20, completion_tokens=5)
+        child.set_token_usage(
+            prompt_tokens=20,
+            completion_tokens=5,
+        )
+
     root.set_output({"status": "finished"})
 
 print(tracer.trace_id)
 ```
 
-A `SwarmTracer` instance shares one trace ID across its spans; construct a new instance for a new run or pass `trace_id` explicitly. Parent relationships are explicit through `parent_span_id`. Supported span types are `AGENT_REASONING`, `TOOL_EXECUTION`, and `HANDOFF`.
+A `SwarmTracer` instance shares one trace ID across its spans. Construct a new instance for a new run or pass a trace ID explicitly.
 
-The SDK also provides `async with tracer.async_span(...)`, a synchronous `@tracer.trace(...)` decorator, and `enabled=False` to suppress emission. The context managers post a span when they exit; delivery failures are logged without raising into the instrumented application. They do not queue or retry failed deliveries.
+Parent-child relationships are created using `parent_span_id`.
 
-The SDK does **not** create state snapshots or mark traces complete automatically. The example records spans but leaves the trace status running. Completion is a separate `PATCH /traces/{trace_id}/complete` call. Snapshot replay requires snapshots supplied through `/ingest`, as the bundled agents do.
+Supported span types include:
 
-See [sdk/swarmtrace/tracer.py](sdk/swarmtrace/tracer.py) and [sdk/swarmtrace/_http.py](sdk/swarmtrace/_http.py) for the actual API and transport behavior. Installation from a published package registry is not assumed here.
+- `AGENT_REASONING`
+- `TOOL_EXECUTION`
+- `HANDOFF`
 
-## API overview
+The SDK also provides asynchronous spans, a tracing decorator, and an `enabled=False` option.
 
-Paths below are relative to the backend origin. For request schemas, use the running application's `/docs` or inspect [backend/routers](backend/routers).
+**SDK limitations:**
 
-### Accounts, projects, and keys
+- The SDK does not automatically create state snapshots.
+- It does not automatically mark traces complete.
+- Failed span delivery is logged but not queued or retried.
+- Snapshot-based replay requires snapshots supplied through ingestion.
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| POST | `/auth/register` | Register with `email`, `password`, and `name`; returns a JWT |
-| POST | `/auth/login` | Sign in with `email` and `password`; returns a JWT |
-| GET | `/auth/me` | Read the JWT user's profile |
-| GET / POST | `/projects` | List membership projects / create a project |
-| GET / DELETE | `/projects/{project_id}` | Read a membership project / delete as admin |
-| GET / POST | `/api-keys` | List the user's key previews / create a key for an owned project |
-| DELETE | `/api-keys/{key_id}` | Revoke the user's key |
-| GET / POST | `/projects/{project_id}/members` | List members / add an already registered user as admin |
-| PATCH / DELETE | `/projects/{project_id}/members/{member_id}` | Change role / remove member as admin |
+See `sdk/swarmtrace/tracer.py` and `sdk/swarmtrace/_http.py` for implementation details.
 
-### Tracing, replay, evaluation, and export
+## API Overview
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/health` | Static service health metadata |
-| POST | `/ingest` | Submit `spans` and optional `snapshots`; accepts JWT or `X-API-Key` |
-| GET | `/traces` | List the latest 100 matching traces |
-| GET | `/trace/{trace_id}` | Return trace metadata and nested `span_tree` |
-| PATCH | `/traces/{trace_id}/complete` | Set completion status and aggregate latency/cost; `status` defaults to `SUCCESS` |
-| GET | `/metrics` | Dashboard summary and seven-day activity; optional `project_id` |
-| POST | `/replay` | Fork a saved snapshot using `trace_id`, `step_number`, and `overrides` |
-| POST | `/evaluate/{trace_id}` | Evaluate previously unevaluated reasoning spans |
-| GET | `/evaluations/{trace_id}` | Retrieve persisted evaluation scores |
-| GET | `/export/otlp/{trace_id}` | Generate an OTLP JSON response |
-| GET | `/export/otlp/{trace_id}/download` | Download generated OTLP JSON |
-| WebSocket | `/ws/traces` | Global `TRACE_UPDATE` notifications |
-| WebSocket | `/ws/trace/{trace_id}` | Per-trace `NEW_SPAN` notifications |
+The following endpoints are based on the current backend implementation. For complete request and response schemas, use `/docs` while the backend is running.
 
-`GET /traces` accepts `project_id`, `status`, `root_agent`, `search`, `from_date`, and `to_date`. Date filters exist in the API, while the current dashboard exposes project, trace ID, status, and agent controls.
+### Authentication, Projects, and API Keys
 
-For example, a replay body after the bundled researcher step can replace the saved findings:
+| Method | Endpoint | Purpose |
+|---|---|---|
+| POST | `/auth/register` | Register an account |
+| POST | `/auth/login` | Sign in |
+| GET | `/auth/me` | Retrieve the authenticated user's profile |
+| GET / POST | `/projects` | List or create projects |
+| GET / DELETE | `/projects/{project_id}` | Retrieve or delete a project |
+| GET / POST | `/api-keys` | List or create API keys |
+| DELETE | `/api-keys/{key_id}` | Revoke an API key |
+| GET / POST | `/projects/{project_id}/members` | List or add project members |
+| PATCH / DELETE | `/projects/{project_id}/members/{member_id}` | Update or remove a member |
 
-```json
-{
-  "trace_id": "<existing-trace-id>",
-  "step_number": 1,
-  "overrides": {
-    "findings": "Replacement findings for the downstream writer"
-  }
-}
-```
+### Tracing, Replay, Evaluation, and Export
 
-Replay merges these fields into stored state and awaits downstream execution before returning the fork ID. It requires a snapshot at that step and is not a generic mechanism for resuming arbitrary Python applications.
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/health` | Service health metadata |
+| POST | `/ingest` | Submit spans and optional snapshots |
+| GET | `/traces` | List traces |
+| GET | `/trace/{trace_id}` | Retrieve trace details and span tree |
+| PATCH | `/traces/{trace_id}/complete` | Complete a trace |
+| GET | `/metrics` | Retrieve dashboard metrics |
+| POST | `/replay` | Replay a saved snapshot |
+| POST | `/evaluate/{trace_id}` | Evaluate reasoning spans |
+| GET | `/evaluations/{trace_id}` | Retrieve evaluation results |
+| GET | `/export/otlp/{trace_id}` | Generate OTLP JSON |
+| GET | `/export/otlp/{trace_id}/download` | Download OTLP JSON |
+| WebSocket | `/ws/traces` | Global trace notifications |
+| WebSocket | `/ws/trace/{trace_id}` | Per-trace notifications |
 
-### Alerts and administration
+The trace listing endpoint supports project, status, root-agent, search, and date filters.
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| POST | `/alerts` | Create or update a webhook for an owned project |
-| GET / DELETE | `/alerts/{project_id}` | Read / remove the owner's webhook configuration |
-| GET | `/audit/{project_id}` | Admin audit-log query; see the limitation below |
-| GET / PUT | `/retention/{project_id}` | Read a retention policy / set it as admin |
-| DELETE | `/retention/{project_id}/purge` | Admin-triggered removal of traces older than the configured policy |
-| GET | `/billing/plans` | Read plan definitions |
-| GET | `/billing/{project_id}` | Read membership-project plan and monthly usage |
-| POST | `/billing/{project_id}/upgrade` | Admin mock plan change; no payment processing |
+### Alerts and Administration
 
-Authentication is **not consistently required across this API**. The frontend login gate does not protect backend endpoints. See [Security](#security) before exposing the backend.
+| Method | Endpoint | Purpose |
+|---|---|---|
+| POST | `/alerts` | Create or update a webhook |
+| GET / DELETE | `/alerts/{project_id}` | Retrieve or delete webhook configuration |
+| GET | `/audit/{project_id}` | Retrieve audit records |
+| GET / PUT | `/retention/{project_id}` | Retrieve or configure retention |
+| DELETE | `/retention/{project_id}/purge` | Purge older traces |
+| GET | `/billing/plans` | Retrieve plan definitions |
+| GET | `/billing/{project_id}` | Retrieve project plan and usage |
+| POST | `/billing/{project_id}/upgrade` | Perform a mock plan change |
+
+**Important:** Not all backend endpoints currently enforce authentication and project-level authorization. Review the [Security](#security) section before exposing the backend publicly.
 
 ## Testing
 
-### Backend automated tests
+### Backend Tests
 
-From `backend/`, with the virtual environment and requirements installed:
+From the `backend/` directory, with the virtual environment activated:
 
-```sh
+```bash
 python -m pytest tests -v -p no:cacheprovider
 ```
 
-The requirements file includes pytest, pytest-asyncio, and pytest-mock. Existing tests cover span helpers, database pool behavior, ingestion validation, trace queries/tree responses, and replay responses. They use mock database pools, HTTP calls, and replay execution; the ASGI test client does not run the application startup lifecycle.
+The backend tests use mocked database pools, HTTP calls, and replay execution. They cover areas including database behavior, ingestion, trace queries, authorization, and replay.
 
-These tests are intended to run without a live database or Groq request. `tests/test_health.py` currently contains WebSocket router code rather than health test functions. No passing-test count or comprehensive authentication coverage is claimed.
+These tests are not a substitute for live integration testing. In particular, the test client does not run the complete application startup lifecycle.
 
-### Frontend checks
+### Frontend Checks
 
-From `frontend/`:
+From the `frontend/` directory:
 
-```sh
+```bash
 npm run lint
 npm run build
 ```
 
-These are lint/build checks, not automated UI tests. There is no frontend `test` script or checked-in frontend test suite. No dedicated SDK tests were found either.
+The repository contains files under `frontend/tests/`, including browser smoke and component-related checks. These are not exposed through a standard `npm test` script in the current package configuration. Check the individual test files for their execution requirements before running them.
 
-### Live verification
+### Live Verification
 
-End-to-end registration, ingestion, tree inspection, replay, evaluation, WebSocket delivery, and outbound alerts require running services. Replay and evaluation additionally require a working Groq key and accessible configured models; webhook delivery requires a reachable endpoint. Use a disposable local project/database for these checks. The repository does not provide a separate automated live-test command.
+End-to-end workflows require running services.
+
+The following require additional runtime configuration:
+
+- Registration and authentication
+- SDK ingestion
+- Trace exploration
+- Snapshot replay
+- Groq-powered evaluation
+- WebSocket notifications
+- Outbound webhook delivery
+
+Replay and evaluation require a working Groq API key and accessible models. Webhook testing requires a reachable endpoint.
+
+Use a disposable local database and project for live testing.
 
 ## Deployment
 
-[render.yaml](render.yaml) describes a **backend-only** Render Python web service:
+The checked-in `render.yaml` describes a backend-only Render web service.
 
-- Root directory: `backend`.
-- Build command: `pip install -r requirements.txt`.
-- Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`.
-- Manually supplied values: `DATABASE_URL`, `GROQ_API_KEY`, and `INGEST_URL`.
-- Declared values: `ENVIRONMENT=production` and `LOG_LEVEL=INFO`.
+### Backend Deployment on Render
 
-Use a Python 3.12+ runtime. Supply a database connection string with appropriate provider SSL settings. `INGEST_URL` must resolve to this backend's `/ingest` endpoint for emitted replay spans.
+1. Push the repository to GitHub.
+2. Create a new Web Service on Render.
+3. Connect the `aayushi-sing/SwarmTrace` repository.
+4. Set the root directory to `backend`.
+5. Use the configured Python build and start commands.
 
-Also configure **`JWT_SECRET_KEY` explicitly**: it is consumed by the application but absent from the blueprint's environment list. For bundled span emission and replay, configure `SWARMTRACE_API_KEY` after creating a project key. Do not put either value in source control.
+The current blueprint specifies:
 
-The blueprint does not provision PostgreSQL, a frontend service, or a recurring retention scheduler. Deploy the frontend separately: run `npm ci` and `npm run build` from `frontend/`, serve `frontend/dist`, set an absolute HTTPS `VITE_API_URL` at build time, and configure the host to serve `index.html` for browser routes. Ensure the frontend origin is explicitly allowed by backend CORS; the literal wildcard-looking origin in the source is not a general subdomain matching policy.
+**Build command**
 
-This README does not assert that any public deployment, model, or external collector integration is currently available. Deployment steps are derived from checked-in configuration, not a completed deployment run.
+```bash
+pip install -r requirements.txt
+```
+
+**Start command**
+
+```bash
+uvicorn main:app --host 0.0.0.0 --port $PORT
+```
+
+Configure the required environment variables in Render:
+
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | Hosted PostgreSQL connection string |
+| `JWT_SECRET_KEY` | Strong, randomly generated JWT signing secret |
+| `GROQ_API_KEY` | Groq API key |
+| `INGEST_URL` | Public backend ingestion URL |
+| `SWARMTRACE_API_KEY` | Project API key for bundled span emission, when required |
+
+The current Render blueprint does not provision PostgreSQL automatically. A separate hosted PostgreSQL database is required.
+
+The blueprint also does not automatically configure `JWT_SECRET_KEY` or `SWARMTRACE_API_KEY`; add them through the service's environment settings when needed.
+
+### Frontend Deployment
+
+The frontend must be deployed separately as a static site.
+
+Build it from the `frontend/` directory:
+
+```bash
+npm ci
+npm run build
+```
+
+The generated static files are in:
+
+```text
+frontend/dist/
+```
+
+Configure your hosting provider with:
+
+- Build command: `npm ci && npm run build`
+- Output directory: `dist`
+- Environment variable: `VITE_API_URL=https://<your-backend-domain>`
+
+Configure the backend CORS settings to allow the exact deployed frontend origin.
+
+The frontend should use HTTPS in a public deployment. Configure the hosting provider to serve `index.html` for browser-side routes.
+
+**Deployment status:** These instructions describe the checked-in deployment configuration. They do not claim that a public deployment has already been completed or verified.
 
 ## Security
 
-- **Passwords and sessions:** passwords are hashed with bcrypt. JWTs use HS256 with a seven-day expiry. The browser stores its bearer token in `localStorage` and clears it on an API 401 response. The route wrapper checks token presence rather than validating it itself.
-- **API keys:** generated keys use cryptographically random bytes and a project association. Ingestion validates active keys and records last use. Listing returns previews, but full key values are stored in the database without hashing; treat database access as access to those credentials.
-- **Project roles:** member, retention, billing, and audit routes use viewer/admin role dependencies. Project deletion checks admin membership; API-key creation and webhook configuration check project ownership. These checks do not establish uniform tenant isolation across the application.
-- **Access-control gaps:** trace listing/detail, metrics, completion, replay, evaluation, OTLP export, and both WebSocket endpoints have no authentication dependency. Trace queries also do not enforce project membership. Some JWT-dependent handlers assume a non-null user although the shared dependency can return `None` for a missing token.
-- **Data and external calls:** stored payloads can include sensitive prompts and outputs. Evaluation sends truncated input/output representations to Groq, and replay sends saved state-derived prompts to agent models. Webhook destinations are user-supplied URLs and receive outbound requests; no destination allowlist is implemented.
-- **Secrets and exposure:** set a strong JWT signing secret and keep database, provider, and ingestion credentials out of Git. `VITE_` values are browser-visible configuration and must not contain secrets. CORS and the frontend login screen do not substitute for backend authorization.
+SwarmTrace includes authentication and project-management functionality, but the current implementation has important security limitations.
 
-Given these source-established gaps, restrict backend exposure to a trusted environment until access controls are completed and verified. No security certification or tenant-isolation guarantee is claimed.
+- **Passwords and sessions:** Passwords are hashed with bcrypt. JWTs use HS256 and have a seven-day expiry. Browser sessions store bearer tokens in `localStorage`.
+- **API keys:** Project API keys are generated using cryptographically random bytes. The current implementation stores full key values in the database, so database access must be treated as access to those credentials.
+- **Project roles:** Some membership, retention, billing, and audit endpoints use viewer/admin role checks.
+- **Authorization gaps:** Several trace, metrics, replay, evaluation, export, and WebSocket endpoints currently lack authentication or consistent project-level authorization.
+- **Webhook destinations:** Webhook URLs are user-supplied, and destination restrictions are not implemented.
+- **External model requests:** Evaluation and replay can send stored prompt and output data to Groq.
+- **Secret management:** Database credentials, JWT secrets, and provider API keys must be stored in environment variables or deployment secret stores. Never expose secrets through frontend `VITE_` variables.
 
-## Current limitations
+The frontend login screen and CORS configuration do not replace backend authentication and authorization.
 
-- **Replay scope:** saved snapshots and the bundled pipeline's state fields are required. Step 1 resumes writer and critic; step 2 resumes critic; step 3 executes no downstream agent. The SDK alone does not provide replay snapshots. Fork creation does not explicitly copy the parent's project ID.
-- **Trace updates:** the dashboard refetches both traces and metrics for every global trace notification without coalescing. Filter changes recreate its socket, and neither socket factory implements reconnection. The detail page does not subscribe to the per-trace socket; graph state also initializes from spans without synchronizing later prop changes.
-- **Trace browsing and comparison:** the list returns at most 100 results with no pagination. Diff matching uses agent name and selects the first match, so repeated instances of one agent are not aligned individually.
-- **Evaluation:** previously evaluated spans are skipped even when the UI says “Re-evaluate.” Judge inputs and outputs are capped at 2,000 characters each; individual judge failures are stored as `ERROR` evaluations. Model availability requires live verification.
-- **Costs and loop detection:** estimates use fixed token prices rather than provider billing reconciliation. Loop detection counts repeated sender/receiver handoffs within a trace; it is not general cycle analysis.
-- **Alerts:** loop ingestion and explicit `FAILED` completion invoke alert delivery. Replay's direct failed-status update does not invoke that helper. Delivery has no retry queue, and its dashboard link is hard-coded to the existing hosted frontend origin.
-- **Administration:** membership, audit, retention, export, and billing have no dedicated frontend pages. Audit queries currently assemble `LIMIT` before `ORDER BY`, which requires correction before relying on that endpoint. Replay audit writes use a non-UUID system user against a UUID column and may fail; audit logging is best-effort.
-- **Retention and billing:** retention runs at startup or through an explicit purge request, without a scheduled background task. Billing changes are mocked; payment checkout/webhooks are not wired and ingestion does not enforce the declared plan limits.
-- **Verification coverage:** frontend and dedicated SDK automated tests are absent. Docker startup, live deployment, Groq-backed workflows, redesigned UI appearance, and external OTLP collector compatibility require separate runtime verification.
+**Do not expose this backend to untrusted public traffic or store sensitive user data until the access-control and credential-storage issues have been addressed and verified.**
+
+## Current Limitations
+
+- **Replay scope:** Replay depends on saved snapshots and the state fields used by the bundled pipeline. It is not a generic mechanism for resuming arbitrary Python applications.
+- **SDK snapshots:** The standalone SDK records spans but does not automatically create replay snapshots or complete traces.
+- **Trace browsing:** Trace listing is limited to the latest 100 matching traces and does not currently provide pagination.
+- **Live updates:** WebSocket clients do not implement automatic reconnection.
+- **Evaluation:** Previously evaluated spans are skipped even when the UI displays a re-evaluation action. Judge inputs and outputs are truncated.
+- **Cost estimates:** Costs use fixed token-price estimates rather than reconciliation with provider billing.
+- **Alerts:** Webhook delivery does not have a retry queue.
+- **Administration:** Membership, audit, retention, export, and billing capabilities do not all have dedicated frontend pages.
+- **Billing:** Plan changes are mocked. Payment processing is not implemented, and plan limits are not enforced during ingestion.
+- **Retention:** Retention cleanup runs during startup or through an explicit purge request; there is no scheduled background task.
+- **Testing:** Live deployment, external model workflows, and end-to-end behavior require separate runtime verification.
+
+## License
+
+This repository should retain the original MIT license notice and copyright attribution before public distribution. See the root `LICENSE` file.
